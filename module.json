@@ -1,0 +1,24 @@
+{
+  "id": "trg-alchemist-maps",
+  "title": "Alchemist Maps",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "14",
+    "verified": "14"
+  },
+  "description": "<p><span>A collection of preconfigured Foundry VTT battle maps</span></p>",
+  "flags": {
+    "canUpload": true
+  },
+  "packs": [
+    {
+      "name": "alchemist-maps",
+      "label": "Alchemist Maps",
+      "path": "packs/alchemist-maps",
+      "type": "Scene"
+    }
+  ],
+  "manifest": "https://raw.githubusercontent.com/snowtroll75-debug/trg-alchemist-maps/main/module.json",
+  "download": "https://github.com/snowtroll75-debug/trg-alchemist-maps/releases/download/v1.0.0/trg-alchemist-maps-1.0.0.zip",
+  "url": "https://github.com/snowtroll75-debug/trg-alchemist-maps"
+}
