@@ -1,0 +1,110 @@
+name: Publish Foundry module
+
+on:
+  push:
+    paths:
+      - "incoming/*.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Locate uploaded module ZIP
+        id: input
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(incoming/*.zip)
+          if (( ${#files[@]} == 0 )); then
+            echo "No ZIP found under incoming/" >&2
+            exit 1
+          fi
+          selected=$(printf '%s\n' "${files[@]}" | sort -V | tail -n 1)
+          echo "zip=$selected" >> "$GITHUB_OUTPUT"
+
+      - name: Validate module and prepare release
+        id: package
+        shell: bash
+        env:
+          SOURCE_ZIP: ${{ steps.input.outputs.zip }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re, zipfile
+          src=pathlib.Path(os.environ["SOURCE_ZIP"])
+          out=pathlib.Path("build")
+          out.mkdir(exist_ok=True)
+          with zipfile.ZipFile(src) as z:
+              names=z.namelist()
+              if "module.json" not in names:
+                  raise SystemExit("ZIP must contain module.json at its root")
+              for name in names:
+                  p=pathlib.PurePosixPath(name)
+                  if p.is_absolute() or ".." in p.parts:
+                      raise SystemExit(f"Unsafe ZIP entry: {name}")
+              manifest=json.loads(z.read("module.json"))
+              if manifest.get("id")!="trg-alchemist-maps":
+                  raise SystemExit("Wrong module ID")
+              version=manifest["version"]
+              if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+                  raise SystemExit("Use a numeric X.Y.Z version")
+              packpath=manifest.get("packs",[{}])[0].get("path","")
+              if not any(n.startswith(packpath.rstrip("/")+"/") for n in names):
+                  raise SystemExit("Scene pack folder missing")
+              if not any(n.startswith("assets/") for n in names):
+                  raise SystemExit("Assets folder missing")
+              root="https://github.com/snowtroll75-debug/trg-alchemist-maps"
+              manifest["url"]=root
+              manifest["manifest"]="https://raw.githubusercontent.com/snowtroll75-debug/trg-alchemist-maps/main/module.json"
+              manifest["download"]=f"{root}/releases/download/v{version}/trg-alchemist-maps-{version}.zip"
+              for n in names:
+                  if n=="module.json" or n.endswith("/"): continue
+                  dest=out/n
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  with z.open(n) as r, dest.open("wb") as w:
+                      import shutil
+                      shutil.copyfileobj(r,w)
+              (out/"module.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+              pathlib.Path("module.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+              with zipfile.ZipFile(f"trg-alchemist-maps-{version}.zip","w",zipfile.ZIP_DEFLATED) as z:
+                  for f in out.rglob("*"):
+                      if f.is_file(): z.write(f,f.relative_to(out))
+              with open(os.environ["GITHUB_OUTPUT"],"a") as f:
+                  print(f"version={version}",file=f)
+                  print(f"filename=trg-alchemist-maps-{version}.zip",file=f)
+          PY
+
+      - name: Publish updated manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Foundry manifest for v${{ steps.package.outputs.version }}"
+            git push
+          fi
+
+      - name: Create GitHub Release and attach ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${{ steps.package.outputs.version }}"
+          archive="${{ steps.package.outputs.filename }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$archive" --clobber
+          else
+            gh release create "$tag" "$archive" --target main --title "Alchemist Maps $tag" --notes "Foundry VTT V14 Scene Compendium release."
+          fi
